@@ -87,17 +87,6 @@ void output_data(Pointer<PatchHierarchy<NDIM>> patch_hierarchy,
                  const double loop_time,
                  const string& data_dump_dirname);
 
-/*******************************************************************************
- * For each run, the input filename and restart information (if needed) must   *
- * be given on the command line.  For non-restarted case, command line is:     *
- *                                                                             *
- *    executable <input file name>                                             *
- *                                                                             *
- * For restarted run, command line is:                                         *
- *                                                                             *
- *    executable <input file name> <restart directory> <restart number>        *
- *                                                                             *
- *******************************************************************************/
 
 int
 main(int argc, char* argv[])
