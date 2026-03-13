@@ -122,9 +122,10 @@ main(int argc, char* argv[])
 
         // Load stenosed artery mesh
         mesh.read("mesh/artery.msh");
-        
+
         // Prepare mesh for libMesh
         mesh.prepare_for_use();
+        mesh.print_info();
   
         // Create major algorithm and data objects that comprise the
         // application.  These objects are configured from the input database
