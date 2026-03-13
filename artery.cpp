@@ -39,23 +39,9 @@
 // Elasticity model data.
 namespace ModelData
 {
-// Problem parameters.
-static const double R = 0.25;
-static const double w = 0.0625;
-static const double gamma = 0.0;
+// Elasticity parameter (artery wall stiffness)
 static const double mu = 1.0;
-
-// Coordinate mapping function.
-void
-coordinate_mapping_function(libMesh::Point& X, const libMesh::Point& s, void* /*ctx*/)
-{
-    X(0) = (R + s(1)) * cos(s(0) / R) + 0.5;
-    X(1) = (R + gamma + s(1)) * sin(s(0) / R) + 0.5;
-    return;
-} // coordinate_mapping_function
-
-// Stress tensor function.
-bool smooth_case = false;
+// Stress tensor function
 void
 PK1_stress_function(TensorValue<double>& PP,
                     const TensorValue<double>& FF,
@@ -67,14 +53,9 @@ PK1_stress_function(TensorValue<double>& PP,
                     double /*time*/,
                     void* /*ctx*/)
 {
-    PP = (mu / w) * FF;
-    if (smooth_case)
-    {
-        PP(0, 1) = 0.0;
-        PP(1, 1) = 0.0;
-    }
-    return;
-} // PK1_stress_function
+    // linear elastic model
+    PP = mu * FF;
+}
 } // namespace ModelData
 using namespace ModelData;
 
@@ -86,7 +67,6 @@ void output_data(Pointer<PatchHierarchy<NDIM>> patch_hierarchy,
                  const int iteration_num,
                  const double loop_time,
                  const string& data_dump_dirname);
-
 
 int
 main(int argc, char* argv[])
@@ -138,33 +118,14 @@ main(int argc, char* argv[])
         const bool dump_timer_data = app_initializer->dumpTimerData();
         const int timer_dump_interval = app_initializer->getTimerDumpInterval();
 
-        // Create a simple FE mesh with periodic boundary conditions in the "x"
-        // direction.
-        //
-        // Note that boundary condition data must be registered with each FE
-        // system before calling IBFEMethod::initializeFEData().
         Mesh mesh(init.comm(), NDIM);
-        const double R = 0.25;
-        const double w = 0.0625;
-        const double dx0 = 1.0 / 64.0;
-        const double dx = input_db->getDouble("DX");
-        const double MFAC = input_db->getDouble("MFAC");
-        const double ds = MFAC * dx;
-        string elem_type = input_db->getString("ELEM_TYPE");
-        bool nested_meshes = input_db->getBoolWithDefault("CONVERGENCE_STUDY", false);
-        const int n_x = nested_meshes ? round(16.0 * round(2.0 * M_PI * R / dx0 / 16.0) / MFAC) * round(dx0 / dx) :
-                                        ceil(2.0 * M_PI * R / ds);
-        const int n_y = nested_meshes ? round(4.0 * round(w / dx0 / 4.0) / MFAC) * round(dx0 / dx) : ceil(w / ds);
-        MeshTools::Generation::build_square(
-            mesh, n_x, n_y, 0.0, 2.0 * M_PI * R, 0.0, w, Utility::string_to_enum<ElemType>(elem_type));
-        VectorValue<double> boundary_translation(2.0 * M_PI * R, 0.0, 0.0);
-        PeriodicBoundary pbc(boundary_translation);
-        pbc.myboundary = 3;
-        pbc.pairedboundary = 1;
 
-        // Configure stress tensor options.
-        smooth_case = input_db->getBool("SMOOTH_CASE");
-
+        // Load stenosed artery mesh
+        mesh.read("mesh/artery.msh");
+        
+        // Prepare mesh for libMesh
+        mesh.prepare_for_use();
+  
         // Create major algorithm and data objects that comprise the
         // application.  These objects are configured from the input database
         // and, if this is a restarted run, from the restart database.
@@ -220,7 +181,6 @@ main(int argc, char* argv[])
         // Configure the IBFE solver.
         ib_method_ops->initializeFEEquationSystems();
         FEDataManager* fe_data_manager = ib_method_ops->getFEDataManager();
-        ib_method_ops->registerInitialCoordinateMappingFunction(coordinate_mapping_function);
         ib_method_ops->registerPK1StressFunction(PK1_stress_function);
         if (input_db->getBoolWithDefault("ELIMINATE_PRESSURE_JUMPS", false))
         {
@@ -309,20 +269,8 @@ main(int argc, char* argv[])
             exodus_io->append(from_restart);
         }
 
-        // Initialize hierarchy configuration and data on all patches.
-        //
-        // libMesh enforces periodic boundary conditions by adding constraints
-        // to each DofMap. Therefore, in order for this to work, we have to
-        // have set up all libMesh systems by this point (i.e., we have to
-        // have added everything we want to the postprocessor and also
-        // registered everything finite element based, like stress
-        // normalization parts, with IBFEMethod).
         EquationSystems* equation_systems = fe_data_manager->getEquationSystems();
-        for (unsigned int k = 0; k < equation_systems->n_systems(); ++k)
-        {
-            System& system = equation_systems->get_system(k);
-            system.get_dof_map().add_periodic_boundary(pbc);
-        }
+      
         ib_method_ops->initializeFEData();
         if (ib_post_processor) ib_post_processor->initializeFEData();
         time_integrator->initializePatchHierarchy(patch_hierarchy, gridding_algorithm);
@@ -347,7 +295,6 @@ main(int argc, char* argv[])
 
         const int p_idx = var_db->mapVariableAndContextToIndex(p_var, p_ctx);
         const int p_cloned_idx = var_db->registerClonedPatchDataIndex(p_var, p_idx);
-        visit_data_writer->registerPlotQuantity("P error", "SCALAR", p_cloned_idx);
 
         const int coarsest_ln = 0;
         const int finest_ln = patch_hierarchy->getFinestLevelNumber();
@@ -374,13 +321,6 @@ main(int argc, char* argv[])
                 exodus_io->write_timestep(
                     exodus_filename, *equation_systems, iteration_num / viz_dump_interval + 1, loop_time);
             }
-        }
-
-        // Open streams to save volume of structure.
-        ofstream volume_stream;
-        if (IBTK_MPI::getRank() == 0)
-        {
-            volume_stream.open("volume.curve", ios_base::out | ios_base::trunc);
         }
 
         // Main time step loop.
@@ -449,112 +389,6 @@ main(int argc, char* argv[])
                             postproc_data_dump_dirname);
             }
 
-            // Compute velocity and pressure error norms.
-            const int coarsest_ln = 0;
-            const int finest_ln = patch_hierarchy->getFinestLevelNumber();
-            for (int ln = coarsest_ln; ln <= finest_ln; ++ln)
-            {
-                Pointer<PatchLevel<NDIM>> level = patch_hierarchy->getPatchLevel(ln);
-                if (!level->checkAllocated(u_cloned_idx)) level->allocatePatchData(u_cloned_idx);
-                if (!level->checkAllocated(p_cloned_idx)) level->allocatePatchData(p_cloned_idx);
-            }
-
-            pout << "\n"
-                 << "+++++++++++++++++++++++++++++++++++++++++++++++++++\n"
-                 << "Computing error norms.\n\n";
-
-            u_init->setDataOnPatchHierarchy(u_cloned_idx, u_var, patch_hierarchy, loop_time);
-            p_init->setDataOnPatchHierarchy(p_cloned_idx, p_var, patch_hierarchy, loop_time - 0.5 * dt);
-
-            HierarchyMathOps hier_math_ops("HierarchyMathOps", patch_hierarchy);
-            hier_math_ops.setPatchHierarchy(patch_hierarchy);
-            hier_math_ops.resetLevels(coarsest_ln, finest_ln);
-            const double volume = hier_math_ops.getVolumeOfPhysicalDomain();
-            const int wgt_cc_idx = hier_math_ops.getCellWeightPatchDescriptorIndex();
-            const int wgt_sc_idx = hier_math_ops.getSideWeightPatchDescriptorIndex();
-
-            Pointer<CellVariable<NDIM, double>> u_cc_var = u_var;
-            if (u_cc_var)
-            {
-                HierarchyCellDataOpsReal<NDIM, double> hier_cc_data_ops(patch_hierarchy, coarsest_ln, finest_ln);
-                hier_cc_data_ops.subtract(u_cloned_idx, u_idx, u_cloned_idx);
-                pout << "Error in u at time " << loop_time << ":\n"
-                     << "  L1-norm:  " << std::setprecision(10) << hier_cc_data_ops.L1Norm(u_cloned_idx, wgt_cc_idx)
-                     << "\n"
-                     << "  L2-norm:  " << hier_cc_data_ops.L2Norm(u_cloned_idx, wgt_cc_idx) << "\n"
-                     << "  max-norm: " << hier_cc_data_ops.maxNorm(u_cloned_idx, wgt_cc_idx) << "\n";
-            }
-
-            Pointer<SideVariable<NDIM, double>> u_sc_var = u_var;
-            if (u_sc_var)
-            {
-                HierarchySideDataOpsReal<NDIM, double> hier_sc_data_ops(patch_hierarchy, coarsest_ln, finest_ln);
-                hier_sc_data_ops.subtract(u_cloned_idx, u_idx, u_cloned_idx);
-                pout << "Error in u at time " << loop_time << ":\n"
-                     << "  L1-norm:  " << std::setprecision(10) << hier_sc_data_ops.L1Norm(u_cloned_idx, wgt_sc_idx)
-                     << "\n"
-                     << "  L2-norm:  " << hier_sc_data_ops.L2Norm(u_cloned_idx, wgt_sc_idx) << "\n"
-                     << "  max-norm: " << hier_sc_data_ops.maxNorm(u_cloned_idx, wgt_sc_idx) << "\n";
-            }
-
-            HierarchyCellDataOpsReal<NDIM, double> hier_cc_data_ops(patch_hierarchy, coarsest_ln, finest_ln);
-            const double p_mean = (1.0 / volume) * hier_cc_data_ops.integral(p_idx, wgt_cc_idx);
-            hier_cc_data_ops.addScalar(p_idx, p_idx, -p_mean);
-            const double p_cloned_mean = (1.0 / volume) * hier_cc_data_ops.integral(p_cloned_idx, wgt_cc_idx);
-            hier_cc_data_ops.addScalar(p_cloned_idx, p_cloned_idx, -p_cloned_mean);
-            hier_cc_data_ops.subtract(p_cloned_idx, p_idx, p_cloned_idx);
-            pout << "Error in p at time " << loop_time - 0.5 * dt << ":\n"
-                 << "  L1-norm:  " << std::setprecision(10) << hier_cc_data_ops.L1Norm(p_cloned_idx, wgt_cc_idx) << "\n"
-                 << "  L2-norm:  " << hier_cc_data_ops.L2Norm(p_cloned_idx, wgt_cc_idx) << "\n"
-                 << "  max-norm: " << hier_cc_data_ops.maxNorm(p_cloned_idx, wgt_cc_idx) << "\n"
-                 << "+++++++++++++++++++++++++++++++++++++++++++++++++++\n";
-
-            // Compute the volume of the structure.
-            double J_integral = 0.0;
-            System& X_system = equation_systems->get_system<System>(ib_method_ops->getCurrentCoordinatesSystemName());
-            NumericVector<double>* X_vec = X_system.solution.get();
-            NumericVector<double>* X_ghost_vec = X_system.current_local_solution.get();
-            copy_and_synch(*X_vec, *X_ghost_vec);
-            DofMap& X_dof_map = X_system.get_dof_map();
-            std::vector<std::vector<unsigned int>> X_dof_indices(NDIM);
-            std::unique_ptr<FEBase> fe(FEBase::build(NDIM, X_dof_map.variable_type(0)));
-            std::unique_ptr<QBase> qrule = QBase::build(QGAUSS, NDIM, FIFTH);
-            fe->attach_quadrature_rule(qrule.get());
-            const std::vector<double>& JxW = fe->get_JxW();
-            const std::vector<std::vector<VectorValue<double>>>& dphi = fe->get_dphi();
-            TensorValue<double> FF;
-            boost::multi_array<double, 2> X_node;
-            const auto el_begin = mesh.active_local_elements_begin();
-            const auto el_end = mesh.active_local_elements_end();
-            for (auto el_it = el_begin; el_it != el_end; ++el_it)
-            {
-                const auto elem = *el_it;
-                fe->reinit(elem);
-                for (unsigned int d = 0; d < NDIM; ++d)
-                {
-                    X_dof_map.dof_indices(elem, X_dof_indices[d], d);
-                }
-                const int n_qp = qrule->n_points();
-                get_values_for_interpolation(X_node, *X_ghost_vec, X_dof_indices);
-                for (int qp = 0; qp < n_qp; ++qp)
-                {
-                    jacobian(FF, qp, X_node, dphi);
-                    J_integral += abs(FF.det()) * JxW[qp];
-                }
-            }
-            J_integral = IBTK_MPI::sumReduction(J_integral);
-            if (IBTK_MPI::getRank() == 0)
-            {
-                volume_stream.precision(12);
-                volume_stream.setf(ios::fixed, ios::floatfield);
-                volume_stream << loop_time << " " << J_integral << endl;
-            }
-        }
-
-        // Close the logging streams.
-        if (IBTK_MPI::getRank() == 0)
-        {
-            volume_stream.close();
         }
 
         // Cleanup Eulerian boundary condition specification objects (when
