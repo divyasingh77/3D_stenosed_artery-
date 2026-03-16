@@ -121,7 +121,7 @@ main(int argc, char* argv[])
         Mesh mesh(init.comm(), NDIM);
 
         // Load stenosed artery mesh
-        mesh.read("mesh/artery.msh");
+        mesh.read("artery.msh");
 
         // Prepare mesh for libMesh
         mesh.prepare_for_use();
