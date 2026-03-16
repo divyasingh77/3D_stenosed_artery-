@@ -40,7 +40,7 @@
 namespace ModelData
 {
 // Elasticity parameter (artery wall stiffness)
-static const double mu = 1.0;
+static const double mu = 3.0e5;
 // Stress tensor function
 void
 PK1_stress_function(TensorValue<double>& PP,
