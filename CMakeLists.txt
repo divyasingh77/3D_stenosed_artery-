@@ -6,7 +6,7 @@ project(3D_stenosed_artery)
 find_package(IBAMR 0.18.0 REQUIRED)
 
 # Create executable
-add_executable(3D_stenosed_artery main.cpp)
+add_executable(3D_stenosed_artery artery.cpp)
 
 # Link IBAMR (3D version)
 target_link_libraries(3D_stenosed_artery IBAMR::IBAMR3d)
