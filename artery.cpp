@@ -1,4 +1,3 @@
-#define NDIM 3
 // Config files
 #include <SAMRAI_config.h>
 
